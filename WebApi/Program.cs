@@ -6,83 +6,56 @@ using System.Collections.Concurrent;
 var builder = WebApplication.CreateBuilder(args);
 var movieDatabaseConfigSection = builder.Configuration.GetSection("DatabaseSettings");
 builder.Services.Configure<DatabaseSettings>(movieDatabaseConfigSection);
+builder.Services.AddSingleton<IMovieService, MongoMovieService>();
 var app = builder.Build();
 
 app.MapGet("/", () => "Hello World!");
 
-app.MapGet("/check", (Microsoft.Extensions.Options.IOptions<DatabaseSettings> options) =>
+app.MapGet("/check", (IMovieService movieService) => {
+    return movieService.Check();
+});
+
+app.MapPost("/api/movies", (IMovieService service, Movie movie) =>
 {
     try
     {
-        var mongoDbConnectionString = options.Value.ConnectionString;
-
-        var client = new MongoClient(mongoDbConnectionString);
-
-        var databaseNames = client.ListDatabaseNames().ToList();
-
-        var dbList = string.Join(", ", databaseNames);
-        return $"Zugriff auf MongoDB ok. Gefundene Datenbanken: {dbList}";
+        service.Create(movie);
+        return Results.Ok(movie);
     }
     catch (Exception ex)
     {
-        return $"Fehler beim Zugriff auf MongoDB: {ex.Message}";
+        return Results.Conflict(ex.Message);
     }
 });
 
-var movies = new ConcurrentDictionary<string, Movie>();
-
-// Insert Movie
-app.MapPost("/api/movies", (Movie movie) =>
+app.MapGet("/api/movies", (IMovieService service) =>
 {
-    if (movies.ContainsKey(movie.Id))
-    {
-        return Results.Conflict($"Movie mit Id {movie.Id} existiert bereits.");
-    }
-
-    movies[movie.Id] = movie;
-    return Results.Ok(movie);
-});     
-
-// Get all Movies
-app.MapGet("/api/movies", () =>
-{
-    return Results.Ok(movies.Values);
+    return Results.Ok(service.Get());
 });
 
-// Get Movie by Id
-app.MapGet("/api/movies/{id}", (string id) =>
+app.MapGet("/api/movies/{id}", (IMovieService service, string id) =>
 {
-    if (movies.TryGetValue(id, out var movie))
-    {
-        return Results.Ok(movie);
-    }
-
-    return Results.NotFound();
+    var movie = service.Get(id);
+    return movie is null ? Results.NotFound() : Results.Ok(movie);
 });
 
-// Update Movie
-app.MapPut("/api/movies/{id}", (string id, Movie movie) =>
+app.MapPut("/api/movies/{id}", (IMovieService service, string id, Movie movie) =>
 {
-    if (!movies.ContainsKey(id))
-    {
-        return Results.NotFound();
-    }
+    var existing = service.Get(id);
+    if (existing is null) return Results.NotFound();
 
     movie.Id = id;
-    movies[id] = movie;
+    service.Update(id, movie);
     return Results.Ok(movie);
 });
 
-// Delete Movie
-app.MapDelete("/api/movies/{id}", (string id) =>
+app.MapDelete("/api/movies/{id}", (IMovieService service, string id) =>
 {
-    if (movies.TryRemove(id, out _))
-    {
-        return Results.Ok($"Movie mit Id {id} wurde gelöscht.");
-    }
+    var existing = service.Get(id);
+    if (existing is null) return Results.NotFound();
 
-    return Results.NotFound();
+    service.Remove(id);
+    return Results.Ok($"Movie mit Id {id} wurde gelöscht.");
 });
-
 
 app.Run();
