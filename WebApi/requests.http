@@ -1,2 +1,2 @@
 ###
-GET https://www.gbssg.ch/
+GET http://localhost:5001/api/movies
